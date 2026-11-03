@@ -412,3 +412,455 @@ CHIP ALU {
 - If a chip fails, check pin names first (`a`, `b`, `sel`, `in`, `out`), then check for missing semicolons.
 - Internal wire names (like `nota`, `w1`, `c0`) are arbitrary, but each one must be **fed by exactly one output**.
 - In HDL, `false` and `true` are built-in constant buses.
+
+## Building blocks used
+
+| Chip | Purpose |
+|------|---------|
+| `DFF` | Built-in Data Flip-Flop: `out(t) = in(t-1)` (remembers 1 bit for one clock cycle) |
+| `Mux` | 1-bit multiplexer: `out = a` if `sel=0`, else `b` |
+| `Mux16` | 16-bit version of `Mux` |
+| `Mux4Way16` / `Mux8Way16` | Select 1 of 4 / 8 sixteen-bit inputs |
+| `DMux8Way` / `DMux4Way` | Route one input to 1 of 8 / 4 outputs |
+| `Inc16` | `out = in + 1` (16-bit) |
+
+**Clocked behaviour:** the value written at time `t` appears on `out` at time `t+1`.
+
+---
+
+## 1. Bit
+
+### Definition
+A **1-bit register**. It stores a single bit and keeps it until `load = 1` is applied.
+
+### Boolean logic
+```
+out(t+1) = load(t) ? in(t) : out(t)
+```
+i.e. `out(t+1) = (load · in) + (¬load · out(t))`
+
+### Truth table
+
+| load | in | out(t) | out(t+1) |
+|:----:|:--:|:------:|:--------:|
+| 0 | 0 | 0 | 0 (hold) |
+| 0 | 0 | 1 | 1 (hold) |
+| 0 | 1 | 0 | 0 (hold) |
+| 0 | 1 | 1 | 1 (hold) |
+| 1 | 0 | 0 | 0 (load) |
+| 1 | 0 | 1 | 0 (load) |
+| 1 | 1 | 0 | 1 (load) |
+| 1 | 1 | 1 | 1 (load) |
+
+### HDL
+```hdl
+CHIP Bit {
+    IN in, load;
+    OUT out;
+
+    PARTS:
+    Mux(a=dffout, b=in, sel=load, out=muxout);
+    DFF(in=muxout, out=dffout, out=out);
+}
+```
+
+**How it works:** the `Mux` chooses between the old value (feedback from DFF) and the new `in`. The DFF stores the result.
+
+---
+
+## 2. Register (16-bit)
+
+### Definition
+A **16-bit register** made of sixteen `Bit` chips sharing the same `load` signal.
+
+### Boolean logic
+```
+if load(t) == 1:  out(t+1) = in(t)
+else:             out(t+1) = out(t)
+```
+
+### Truth table (per bit, same as Bit)
+
+| load | in[i] | out[i](t+1) |
+|:----:|:-----:|:-----------:|
+| 0 | x | out[i](t) |
+| 1 | 0 | 0 |
+| 1 | 1 | 1 |
+
+### HDL
+```hdl
+CHIP Register {
+    IN in[16], load;
+    OUT out[16];
+
+    PARTS:
+    Bit(in=in[0],  load=load, out=out[0]);
+    Bit(in=in[1],  load=load, out=out[1]);
+    Bit(in=in[2],  load=load, out=out[2]);
+    Bit(in=in[3],  load=load, out=out[3]);
+    Bit(in=in[4],  load=load, out=out[4]);
+    Bit(in=in[5],  load=load, out=out[5]);
+    Bit(in=in[6],  load=load, out=out[6]);
+    Bit(in=in[7],  load=load, out=out[7]);
+    Bit(in=in[8],  load=load, out=out[8]);
+    Bit(in=in[9],  load=load, out=out[9]);
+    Bit(in=in[10], load=load, out=out[10]);
+    Bit(in=in[11], load=load, out=out[11]);
+    Bit(in=in[12], load=load, out=out[12]);
+    Bit(in=in[13], load=load, out=out[13]);
+    Bit(in=in[14], load=load, out=out[14]);
+    Bit(in=in[15], load=load, out=out[15]);
+}
+```
+
+---
+
+## 3. RAM8
+
+### Definition
+**8 registers** of 16 bits each. A 3-bit `address` picks which register is read/written.
+
+- Inputs: `in[16]`, `load`, `address[3]`
+- Output: `out[16]`
+
+### Boolean logic
+```
+out(t)     = Register[address(t)](t)
+if load(t): Register[address(t)](t+1) = in(t)
+```
+- `DMux8Way` sends `load` only to the selected register.
+- `Mux8Way16` selects which register's value goes to `out`.
+
+### Truth table (behaviour)
+
+| load | address | Effect at next clock |
+|:----:|:-------:|----------------------|
+| 0 | any | No change |
+| 1 | 000 | R0 ← in |
+| 1 | 001 | R1 ← in |
+| 1 | 010 | R2 ← in |
+| 1 | 011 | R3 ← in |
+| 1 | 100 | R4 ← in |
+| 1 | 101 | R5 ← in |
+| 1 | 110 | R6 ← in |
+| 1 | 111 | R7 ← in |
+
+`out` is always `R[address]`.
+
+### HDL
+```hdl
+CHIP RAM8 {
+    IN in[16], load, address[3];
+    OUT out[16];
+
+    PARTS:
+    DMux8Way(in=load, sel=address,
+             a=l0, b=l1, c=l2, d=l3, e=l4, f=l5, g=l6, h=l7);
+
+    Register(in=in, load=l0, out=r0);
+    Register(in=in, load=l1, out=r1);
+    Register(in=in, load=l2, out=r2);
+    Register(in=in, load=l3, out=r3);
+    Register(in=in, load=l4, out=r4);
+    Register(in=in, load=l5, out=r5);
+    Register(in=in, load=l6, out=r6);
+    Register(in=in, load=l7, out=r7);
+
+    Mux8Way16(a=r0, b=r1, c=r2, d=r3, e=r4, f=r5, g=r6, h=r7,
+              sel=address, out=out);
+}
+```
+
+---
+
+## 4. RAM64
+
+### Definition
+**64 registers** = 8 × `RAM8`. Uses a 6-bit address.
+
+- `address[0..2]` → register inside the RAM8
+- `address[3..5]` → which RAM8
+
+### Boolean logic
+```
+out(t) = RAM8[address[3..5]].out  (read with address[0..2])
+load goes only to RAM8[address[3..5]]
+```
+
+### Truth table (address split)
+
+| address[3..5] | Selected RAM8 | Register range |
+|:-------------:|:-------------:|:--------------:|
+| 000 | RAM8 #0 | 0 – 7 |
+| 001 | RAM8 #1 | 8 – 15 |
+| 010 | RAM8 #2 | 16 – 23 |
+| 011 | RAM8 #3 | 24 – 31 |
+| 100 | RAM8 #4 | 32 – 39 |
+| 101 | RAM8 #5 | 40 – 47 |
+| 110 | RAM8 #6 | 48 – 55 |
+| 111 | RAM8 #7 | 56 – 63 |
+
+### HDL
+```hdl
+CHIP RAM64 {
+    IN in[16], load, address[6];
+    OUT out[16];
+
+    PARTS:
+    DMux8Way(in=load, sel=address[3..5],
+             a=l0, b=l1, c=l2, d=l3, e=l4, f=l5, g=l6, h=l7);
+
+    RAM8(in=in, load=l0, address=address[0..2], out=r0);
+    RAM8(in=in, load=l1, address=address[0..2], out=r1);
+    RAM8(in=in, load=l2, address=address[0..2], out=r2);
+    RAM8(in=in, load=l3, address=address[0..2], out=r3);
+    RAM8(in=in, load=l4, address=address[0..2], out=r4);
+    RAM8(in=in, load=l5, address=address[0..2], out=r5);
+    RAM8(in=in, load=l6, address=address[0..2], out=r6);
+    RAM8(in=in, load=l7, address=address[0..2], out=r7);
+
+    Mux8Way16(a=r0, b=r1, c=r2, d=r3, e=r4, f=r5, g=r6, h=r7,
+              sel=address[3..5], out=out);
+}
+```
+
+---
+
+## 5. RAM512
+
+### Definition
+**512 registers** = 8 × `RAM64`. Uses a 9-bit address.
+
+- `address[0..5]` → inside the RAM64
+- `address[6..8]` → which RAM64
+
+### Boolean logic
+```
+out(t) = RAM64[address[6..8]].out
+load goes only to RAM64[address[6..8]]
+```
+
+### Truth table (address split)
+
+| address[6..8] | Selected RAM64 | Register range |
+|:-------------:|:--------------:|:--------------:|
+| 000 | #0 | 0 – 63 |
+| 001 | #1 | 64 – 127 |
+| 010 | #2 | 128 – 191 |
+| 011 | #3 | 192 – 255 |
+| 100 | #4 | 256 – 319 |
+| 101 | #5 | 320 – 383 |
+| 110 | #6 | 384 – 447 |
+| 111 | #7 | 448 – 511 |
+
+### HDL
+```hdl
+CHIP RAM512 {
+    IN in[16], load, address[9];
+    OUT out[16];
+
+    PARTS:
+    DMux8Way(in=load, sel=address[6..8],
+             a=l0, b=l1, c=l2, d=l3, e=l4, f=l5, g=l6, h=l7);
+
+    RAM64(in=in, load=l0, address=address[0..5], out=r0);
+    RAM64(in=in, load=l1, address=address[0..5], out=r1);
+    RAM64(in=in, load=l2, address=address[0..5], out=r2);
+    RAM64(in=in, load=l3, address=address[0..5], out=r3);
+    RAM64(in=in, load=l4, address=address[0..5], out=r4);
+    RAM64(in=in, load=l5, address=address[0..5], out=r5);
+    RAM64(in=in, load=l6, address=address[0..5], out=r6);
+    RAM64(in=in, load=l7, address=address[0..5], out=r7);
+
+    Mux8Way16(a=r0, b=r1, c=r2, d=r3, e=r4, f=r5, g=r6, h=r7,
+              sel=address[6..8], out=out);
+}
+```
+
+---
+
+## 6. RAM4K
+
+### Definition
+**4096 registers** = 8 × `RAM512`. Uses a 12-bit address.
+
+- `address[0..8]` → inside the RAM512
+- `address[9..11]` → which RAM512
+
+### Boolean logic
+```
+out(t) = RAM512[address[9..11]].out
+load goes only to RAM512[address[9..11]]
+```
+
+### Truth table (address split)
+
+| address[9..11] | Selected RAM512 | Register range |
+|:--------------:|:---------------:|:--------------:|
+| 000 | #0 | 0 – 511 |
+| 001 | #1 | 512 – 1023 |
+| 010 | #2 | 1024 – 1535 |
+| 011 | #3 | 1536 – 2047 |
+| 100 | #4 | 2048 – 2559 |
+| 101 | #5 | 2560 – 3071 |
+| 110 | #6 | 3072 – 3583 |
+| 111 | #7 | 3584 – 4095 |
+
+### HDL
+```hdl
+CHIP RAM4K {
+    IN in[16], load, address[12];
+    OUT out[16];
+
+    PARTS:
+    DMux8Way(in=load, sel=address[9..11],
+             a=l0, b=l1, c=l2, d=l3, e=l4, f=l5, g=l6, h=l7);
+
+    RAM512(in=in, load=l0, address=address[0..8], out=r0);
+    RAM512(in=in, load=l1, address=address[0..8], out=r1);
+    RAM512(in=in, load=l2, address=address[0..8], out=r2);
+    RAM512(in=in, load=l3, address=address[0..8], out=r3);
+    RAM512(in=in, load=l4, address=address[0..8], out=r4);
+    RAM512(in=in, load=l5, address=address[0..8], out=r5);
+    RAM512(in=in, load=l6, address=address[0..8], out=r6);
+    RAM512(in=in, load=l7, address=address[0..8], out=r7);
+
+    Mux8Way16(a=r0, b=r1, c=r2, d=r3, e=r4, f=r5, g=r6, h=r7,
+              sel=address[9..11], out=out);
+}
+```
+
+---
+
+## 7. RAM16K
+
+### Definition
+**16384 registers** = 4 × `RAM4K`. Uses a 14-bit address.
+(Only **4** sub-chips, so it uses `DMux4Way` / `Mux4Way16`, not 8-way.)
+
+- `address[0..11]` → inside the RAM4K
+- `address[12..13]` → which RAM4K
+
+### Boolean logic
+```
+out(t) = RAM4K[address[12..13]].out
+load goes only to RAM4K[address[12..13]]
+```
+
+### Truth table (address split)
+
+| address[12..13] | Selected RAM4K | Register range |
+|:---------------:|:--------------:|:--------------:|
+| 00 | #0 | 0 – 4095 |
+| 01 | #1 | 4096 – 8191 |
+| 10 | #2 | 8192 – 12287 |
+| 11 | #3 | 12288 – 16383 |
+
+### HDL
+```hdl
+CHIP RAM16K {
+    IN in[16], load, address[14];
+    OUT out[16];
+
+    PARTS:
+    DMux4Way(in=load, sel=address[12..13],
+             a=l0, b=l1, c=l2, d=l3);
+
+    RAM4K(in=in, load=l0, address=address[0..11], out=r0);
+    RAM4K(in=in, load=l1, address=address[0..11], out=r1);
+    RAM4K(in=in, load=l2, address=address[0..11], out=r2);
+    RAM4K(in=in, load=l3, address=address[0..11], out=r3);
+
+    Mux4Way16(a=r0, b=r1, c=r2, d=r3,
+              sel=address[12..13], out=out);
+}
+```
+
+---
+
+## 8. PC (Program Counter)
+
+### Definition
+A **16-bit counter** that holds the address of the next instruction. On each clock it can:
+reset to 0, load a new value (jump), increment by 1, or hold.
+
+- Inputs: `in[16]`, `load`, `inc`, `reset`
+- Output: `out[16]`
+
+### Boolean logic (priority: reset > load > inc > hold)
+```
+if      reset(t): out(t+1) = 0
+else if load(t):  out(t+1) = in(t)
+else if inc(t):   out(t+1) = out(t) + 1
+else:             out(t+1) = out(t)
+```
+
+### Truth table
+
+| reset | load | inc | out(t+1) | Action |
+|:-----:|:----:|:---:|:--------:|--------|
+| 1 | x | x | 0 | Reset |
+| 0 | 1 | x | in | Load / jump |
+| 0 | 0 | 1 | out(t) + 1 | Increment |
+| 0 | 0 | 0 | out(t) | Hold |
+
+### HDL
+```hdl
+CHIP PC {
+    IN in[16], load, inc, reset;
+    OUT out[16];
+
+    PARTS:
+    // 1. Increment current value
+    Inc16(in=feedback, out=incremented);
+
+    // 2. inc: choose between current and incremented
+    Mux16(a=feedback, b=incremented, sel=inc, out=afterInc);
+
+    // 3. load: choose between previous result and new input
+    Mux16(a=afterInc, b=in, sel=load, out=afterLoad);
+
+    // 4. reset: force 0 (highest priority)
+    Mux16(a=afterLoad, b=false, sel=reset, out=afterReset);
+
+    // 5. Store result every cycle (load=true), feed back to output
+    Register(in=afterReset, load=true, out=out, out=feedback);
+}
+```
+
+**Why this order?** The last `Mux16` has the highest priority, so `reset` goes last, then `load`, then `inc`.
+
+---
+
+## Summary table
+
+| Chip | Size | Address bits | Built from |
+|------|------|:------------:|------------|
+| Bit | 1 bit | – | Mux + DFF |
+| Register | 16 bits | – | 16 × Bit |
+| RAM8 | 8 × 16 | 3 | 8 × Register |
+| RAM64 | 64 × 16 | 6 | 8 × RAM8 |
+| RAM512 | 512 × 16 | 9 | 8 × RAM64 |
+| RAM4K | 4096 × 16 | 12 | 8 × RAM512 |
+| RAM16K | 16384 × 16 | 14 | 4 × RAM4K |
+| PC | 16 bits | – | Register + Inc16 + 3 × Mux16 |
+
+---
+
+## Exam tips
+
+- **Address split pattern:** low bits go *inside* the sub-chip, high bits select *which* sub-chip.
+- Always pair **DMux** (for `load`) with **Mux** (for `out`) using the **same `sel` bits**.
+- `RAM16K` uses **4-way**, every other RAM uses **8-way**.
+- In `PC`, remember the priority: **reset > load > inc**.
+- `DFF` output is delayed by one clock; that is what makes the chip "remember".
+- Pin sub-range syntax: `address[0..2]` (inclusive on both ends).
+
+---
+
+## How to test
+
+1. Open the **Hardware Simulator** from the Nand2Tetris software suite.
+2. Load the chip's `.hdl` file (e.g. `Bit.hdl`).
+3. Load the matching `.tst` script and `.cmp` file.
+4. Run the script and confirm the output matches the compare file.

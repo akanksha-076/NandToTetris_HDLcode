@@ -1,5 +1,5 @@
 # NandToTetris_HDLcode
-# Hack HDL Chip Set (nand2tetris)
+# Hack HDL Chip Set (NandToTetris)
 
 Every chip is built from the single primitive **Nand**, so you never write `Nand` yourself. Each chip goes in its own file named after the chip, e.g. `Not.hdl`, `And.hdl`.
 
